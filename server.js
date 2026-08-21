@@ -353,21 +353,25 @@ function handleMessage(ws, message) {
 
     // レース結果を開始時点で確定し、同じ順番を全クライアントへ渡す。
     // これで「画面では1着なのに結果は2着」のズレを防ぐ。
-    // パラメーターを主軸にしたレース結果。
-    // 以前の±22%ランダム補正は大きすぎて、同じ能力でも露骨に差が出ていたため、
-    // ランダム要素を±4%に縮小する。
-    const scored=field.map(h=>({...h,_score:h.ability*(0.96+Math.random()*0.08)}));
-    const maxScore=Math.max(...scored.map(h=>h._score),1);
-    const minScore=Math.min(...scored.map(h=>h._score),maxScore);
-    const scoreRange=Math.max(0.0001,maxScore-minScore);
-    const results=scored
-      .sort((a,b)=>b._score-a._score)
+    // パラメーターだけで走行速度を決定する。
+    // 同じ SPEED / STAMINA / POWER / GUTS の馬は、同じ能力値・同じゴールタイムになる。
+    // 以前のランダム補正＋フィールド内の最大/最小値による正規化は、
+    // 同能力の馬でも走行差が大きくなる原因だったので廃止。
+    const results=field
+      .map(h=>{
+        const ability=Number(h.ability)||0;
+        // ability は通常 0～150。能力が高いほどゴールタイムが短い。
+        const finishTimeMs=Math.round(Math.max(3900,Math.min(6000,5900-ability*12)));
+        return {...h,finishTimeMs};
+      })
+      .sort((a,b)=>{
+        if(a.finishTimeMs!==b.finishTimeMs) return a.finishTimeMs-b.finishTimeMs;
+        // 同能力・同タイムなら着順だけを安定して決定。
+        return String(a.playerId).localeCompare(String(b.playerId));
+      })
       .map((h,i)=>{
-        // 強い馬ほど早くゴール。差は能力差に比例し、同値ならごく小さい揺らぎだけ。
-        const normalized=(maxScore-h._score)/scoreRange;
-        const finishTimeMs=Math.round(4100+normalized*1150);
-        const r={...h,finishOrder:i+1,plannedFinishOrder:i+1,finishTimeMs,progress:100,finished:true};
-        delete r._score; return r;
+        const r={...h,finishOrder:i+1,plannedFinishOrder:i+1,progress:100,finished:true};
+        return r;
       });
     const plannedByPlayer=new Map(results.map(h=>[h.playerId,h.plannedFinishOrder]));
     field.forEach(h=>{
