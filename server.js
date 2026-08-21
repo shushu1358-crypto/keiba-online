@@ -63,6 +63,7 @@ function broadcastRoomState(room) {
     size: room.size,
     format: room.format,
     prize: room.prize || 0,
+    hostId: room.players.find(p => p.host)?.id || null,
     players: publicPlayers(room)
   });
 }
@@ -185,6 +186,7 @@ function handleMessage(ws, message) {
       host: true,
       size: room.size,
       prize: room.prize || 0,
+      hostId: player.id,
       players: publicPlayers(room)
     });
 
@@ -230,6 +232,7 @@ function handleMessage(ws, message) {
       host: false,
       size: room.size,
       prize: room.prize || 0,
+      hostId: room.players.find(p => p.host)?.id || null,
       players: publicPlayers(room)
     });
 
@@ -350,14 +353,28 @@ function handleMessage(ws, message) {
 
     // レース結果を開始時点で確定し、同じ順番を全クライアントへ渡す。
     // これで「画面では1着なのに結果は2着」のズレを防ぐ。
-    const results=field.map(h=>({...h,_score:h.ability*(.78+Math.random()*.44)}))
+    // パラメーターを主軸にしたレース結果。
+    // 以前の±22%ランダム補正は大きすぎて、同じ能力でも露骨に差が出ていたため、
+    // ランダム要素を±4%に縮小する。
+    const scored=field.map(h=>({...h,_score:h.ability*(0.96+Math.random()*0.08)}));
+    const maxScore=Math.max(...scored.map(h=>h._score),1);
+    const minScore=Math.min(...scored.map(h=>h._score),maxScore);
+    const scoreRange=Math.max(0.0001,maxScore-minScore);
+    const results=scored
       .sort((a,b)=>b._score-a._score)
       .map((h,i)=>{
-        const r={...h,finishOrder:i+1,plannedFinishOrder:i+1,progress:100,finished:true};
+        // 強い馬ほど早くゴール。差は能力差に比例し、同値ならごく小さい揺らぎだけ。
+        const normalized=(maxScore-h._score)/scoreRange;
+        const finishTimeMs=Math.round(4100+normalized*1150);
+        const r={...h,finishOrder:i+1,plannedFinishOrder:i+1,finishTimeMs,progress:100,finished:true};
         delete r._score; return r;
       });
     const plannedByPlayer=new Map(results.map(h=>[h.playerId,h.plannedFinishOrder]));
-    field.forEach(h=>{h.plannedFinishOrder=plannedByPlayer.get(h.playerId)||field.length;});
+    field.forEach(h=>{
+      const result=results.find(r=>r.playerId===h.playerId);
+      h.plannedFinishOrder=result?.plannedFinishOrder||field.length;
+      h.finishTimeMs=result?.finishTimeMs||5250;
+    });
 
     broadcast(room,{type:"race_start",race,field});
 
