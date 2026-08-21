@@ -164,13 +164,14 @@ function handleMessage(ws, message) {
       horse: null
     };
 
-    const tournamentPrize = Math.max(0, Math.min(1000000000000, Math.floor(Number(message.prize) || 0)));
     const room = {
       code,
       name: String(message.name || "ミント杯").slice(0, 24),
       size: Math.min(Math.max(Number(message.size) || 8, 2), 32),
       format: String(message.format || "トーナメント"),
-      prize: tournamentPrize,
+      prize: Math.max(0, Math.min(1000000000000, Math.floor(Number(message.prize) || 0))),
+      raceActive: false,
+      raceNo: 0,
       players: [player]
     };
 
@@ -239,25 +240,17 @@ function handleMessage(ws, message) {
   if (message.type === "leave_room") {
     const room = rooms.get(ws.roomCode);
     if (!room) return;
-
     const index = room.players.findIndex(p => p.ws === ws);
-    if (index === -1) return;
-
+    if (index < 0) return;
     const wasHost = room.players[index].host;
     room.players.splice(index, 1);
-
     ws.roomCode = null;
-
-    if (room.players.length === 0) {
+    if (!room.players.length) {
       rooms.delete(room.code);
       send(ws, { type: "left_room" });
       return;
     }
-
-    if (wasHost) {
-      room.players[0].host = true;
-    }
-
+    if (wasHost) room.players[0].host = true;
     send(ws, { type: "left_room" });
     broadcastRoomState(room);
     return;
@@ -282,156 +275,59 @@ function handleMessage(ws, message) {
     if (!room) return;
 
     const player = room.players.find(p => p.ws === ws);
-
     if (!player || !player.host) {
       send(ws, { type: "error", message: "大会主催者のみレースを開始できます。" });
       return;
     }
-
-    const readyPlayers = room.players.filter(p => p.ready && p.horse);
-    if (readyPlayers.length < 2) {
-      send(ws, { type: "error", message: "同じレースに参加するには2人以上の出走準備が必要です。" });
+    if (room.raceActive) {
+      send(ws, { type: "error", message: "すでにオンラインレース中です。" });
       return;
     }
 
-    const race = {
-      ...(message.race || {}),
-      prize: room.prize > 0 ? room.prize : Number(message.race?.prize) || 0
-    };
-    const fieldSize = Math.min(Math.max(Number(race.fieldSize) || room.size, 2), 12);
-    const field = [];
+    const ready = room.players.filter(p => p.ready && p.horse);
+    if (ready.length < 2) {
+      send(ws, { type: "error", message: "2人以上が出走準備OKになってから開始してください。" });
+      return;
+    }
 
-    // 人間プレイヤーの馬を優先して出走させる。
-    for (const p of readyPlayers) {
-      if (field.length >= fieldSize) break;
+    const field = ready.map((p, i) => {
       const h = p.horse || {};
-      field.push({
-        number: field.length + 1,
-        playerId: p.id,
-        playerName: p.name,
-        isPlayer: true,
-        name: String(h.name || p.name || "プレイヤー").slice(0, 12),
-        speed: clampStat(h.speed),
-        stamina: clampStat(h.stamina),
-        power: clampStat(h.power),
-        guts: clampStat(h.guts),
-        wetAbility: clampStat(h.wetAbility ?? h.rainAptitude ?? 70),
-        style: ["逃げ","先行","差し","追込"].includes(h.style) ? h.style : "先行"
-      });
-    }
-
-    const names = ["サクラCPU","ゴールドCPU","ブルーCPU","ダークCPU","グリーンCPU","レッドCPU","ナイトCPU","シルバーCPU","サンダーCPU","ホワイトCPU","キングCPU","スターCPU"];
-    while (field.length < fieldSize) {
-      field.push({
-        number: field.length + 1,
-        playerId: null,
-        playerName: "CPU",
-        isPlayer: false,
-        name: names[field.length % names.length],
-        speed: 60 + Math.floor(Math.random() * 41),
-        stamina: 60 + Math.floor(Math.random() * 41),
-        power: 60 + Math.floor(Math.random() * 41),
-        guts: 60 + Math.floor(Math.random() * 41),
-        wetAbility: 60 + Math.floor(Math.random() * 41),
-        style: ["逃げ","先行","差し","追込"][Math.floor(Math.random() * 4)]
-      });
-    }
-
-    calculateOnlineOdds(field);
-    const raceField = field.map(h => ({...h, score: undefined}));
-    const result = simulateRace(raceField, race);
-    room.raceNo = (room.raceNo || 0) + 1;
-    room.lastRace = { race: sanitizeRace(race), results: result };
-    room.players.forEach(p => { p.ready = false; p.horse = null; });
-
-    broadcast(room, {
-      type: "race_start",
-      race: sanitizeRace(race),
-      tournamentPrize: room.prize || 0,
-      field: field.map(h => ({...h, odds: h.odds})),
-      players: publicPlayers(room)
+      const speed=Number(h.speed)||60, stamina=Number(h.stamina)||60;
+      const power=Number(h.power)||60, guts=Number(h.guts)||60;
+      return {
+        number:i+1, playerId:p.id,
+        name:String(h.name||p.name||"プレイヤー").slice(0,12),
+        speed,stamina,power,guts,
+        wetAbility:Number(h.wetAbility)||70,
+        style:h.style||"差し",
+        bgColor:/^#[0-9a-fA-F]{6}$/.test(h.bgColor||"")?h.bgColor:"#378f50",
+        ability:speed*.35+stamina*.25+power*.2+guts*.2
+      };
     });
 
-    setTimeout(() => {
-      if (rooms.has(room.code)) {
-        broadcast(room, {
-          type: "race_result",
-          race: sanitizeRace(race),
-          results: result,
-          raceNo: room.raceNo
+    room.raceActive=true;
+    room.raceNo=(room.raceNo||0)+1;
+    const race={...(message.race||{}),prize:room.prize||0};
+
+    broadcast(room,{type:"race_start",race,field});
+
+    setTimeout(()=>{
+      if(!rooms.has(room.code))return;
+      const results=field.map(h=>({...h,_score:h.ability*(.78+Math.random()*.44)}))
+        .sort((a,b)=>b._score-a._score)
+        .map((h,i)=>{
+          const r={...h,finishOrder:i+1,progress:100,finished:true};
+          delete r._score; return r;
         });
-        broadcastRoomState(room);
-      }
-    }, 1800);
+
+      room.raceActive=false;
+      room.players.forEach(p=>{p.ready=false;p.horse=null;});
+      broadcast(room,{type:"race_result",raceNo:room.raceNo,race,results});
+      broadcastRoomState(room);
+    },4500);
+
     return;
   }
-}
-
-function clampStat(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? Math.max(1, Math.min(999, Math.round(n))) : 70;
-}
-
-function sanitizeRace(race) {
-  return {
-    grade: String(race.grade || "ONLINE").slice(0, 20),
-    name: String(race.name || "オンラインレース").slice(0, 30),
-    distance: Math.max(1000, Math.min(4000, Number(race.distance) || 1600)),
-    prize: Math.max(0, Number(race.prize) || 0),
-    fieldSize: Math.min(Math.max(Number(race.fieldSize) || 8, 2), 12),
-    weather: race.weather ? {
-      name: String(race.weather.name || "晴").slice(0, 8),
-      rain: Math.max(0, Math.min(1, Number(race.weather.rain) || 0))
-    } : {name:"晴",rain:0},
-    track: String(race.track || "良").slice(0, 8)
-  };
-}
-
-function calculateOnlineOdds(field) {
-  const abilities = field.map(h => h.speed * .35 + h.stamina * .25 + h.power * .20 + h.guts * .20);
-  const total = abilities.reduce((a,b) => a+b, 0) || field.length;
-  field.forEach((h,i) => {
-    const raw = .92 / (abilities[i] / total);
-    h.odds = Math.max(1.5, Math.round(raw * 10) / 10);
-  });
-  if (field.length >= 6) {
-    const longshot = field.reduce((a,b) => (a.odds > b.odds ? a : b));
-    longshot.odds = Math.max(longshot.odds, 100 + Math.floor(Math.random() * 81));
-  }
-}
-
-function simulateRace(field, race) {
-  const r = sanitizeRace(race);
-  const scored = field.map(h => {
-    let score = h.speed * .38 + h.stamina * .25 + h.power * .20 + h.guts * .17;
-    if (h.style === "逃げ") score += 5;
-    if (h.style === "差し") score += 2;
-    if (h.style === "追込") score += 3;
-    if (r.distance >= 2200) score += (h.stamina - 70) * .10;
-    if (r.weather.rain > .3) score += (h.wetAbility - 70) * r.weather.rain * .12;
-    if (r.track === "重") score += (h.wetAbility - 70) * .08;
-    if (r.track === "不良") score += (h.wetAbility - 70) * .13;
-    score += Math.random() * 35 - 17.5;
-    return {...h, score};
-  });
-
-  scored.sort((a,b) => b.score - a.score);
-  return scored.map((h,i) => ({
-    number: h.number,
-    originalNumber: h.number,
-    playerId: h.playerId,
-    playerName: h.playerName,
-    isPlayer: !!h.isPlayer,
-    name: h.name,
-    speed: h.speed,
-    stamina: h.stamina,
-    power: h.power,
-    guts: h.guts,
-    wetAbility: h.wetAbility,
-    style: h.style,
-    odds: 0,
-    finishOrder: i + 1
-  }));
 }
 
 const server = http.createServer((req, res) => {
