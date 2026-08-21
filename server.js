@@ -270,6 +270,28 @@ function handleMessage(ws, message) {
     return;
   }
 
+  if (message.type === "update_prize") {
+    const room = rooms.get(ws.roomCode);
+    if (!room) return;
+    const player = room.players.find(p => p.ws === ws);
+    if (!player || !player.host) {
+      send(ws, { type: "error", message: "大会主催者のみ賞金を変更できます。" });
+      return;
+    }
+    if (room.raceActive) {
+      send(ws, { type: "error", message: "レース中は大会賞金を変更できません。" });
+      return;
+    }
+    const prize = Math.max(0, Math.min(1000000000000, Math.floor(Number(message.prize) || 0)));
+    if (prize % 100 !== 0) {
+      send(ws, { type: "error", message: "大会賞金は100枚単位で設定してください。" });
+      return;
+    }
+    room.prize = prize;
+    broadcastRoomState(room);
+    return;
+  }
+
   if (message.type === "start_race") {
     const room = rooms.get(ws.roomCode);
     if (!room) return;
@@ -285,8 +307,13 @@ function handleMessage(ws, message) {
     }
 
     const requestedPrize = Math.max(0, Math.floor(Number(message.prizePaidAmount ?? room.prize ?? 0)));
-    if (requestedPrize !== Number(room.prize || 0) || message.prizePaid !== true) {
-      send(ws, { type: "error", message: "大会賞金の預け入れが確認できません。主催者の賞金を用意してから開始してください。" });
+    const hostBalance = Math.floor(Number(message.hostBalance));
+    if (requestedPrize !== Number(room.prize || 0)) {
+      send(ws, { type: "error", message: `大会賞金が一致しません。現在の設定額は ${Number(room.prize||0).toLocaleString()}枚です。` });
+      return;
+    }
+    if (!Number.isFinite(hostBalance) || hostBalance < requestedPrize) {
+      send(ws, { type: "error", message: `主催者の所持金が大会賞金に足りません。必要：${requestedPrize.toLocaleString()}枚 / 所持：${Number.isFinite(hostBalance)?hostBalance.toLocaleString():"不明"}枚` });
       return;
     }
     if (room.prizeEscrowed) {
