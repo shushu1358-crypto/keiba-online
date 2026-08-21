@@ -348,16 +348,21 @@ function handleMessage(ws, message) {
     room.raceNo=(room.raceNo||0)+1;
     const race={...(message.race||{}),prize:room.prize||0};
 
+    // レース結果を開始時点で確定し、同じ順番を全クライアントへ渡す。
+    // これで「画面では1着なのに結果は2着」のズレを防ぐ。
+    const results=field.map(h=>({...h,_score:h.ability*(.78+Math.random()*.44)}))
+      .sort((a,b)=>b._score-a._score)
+      .map((h,i)=>{
+        const r={...h,finishOrder:i+1,plannedFinishOrder:i+1,progress:100,finished:true};
+        delete r._score; return r;
+      });
+    const plannedByPlayer=new Map(results.map(h=>[h.playerId,h.plannedFinishOrder]));
+    field.forEach(h=>{h.plannedFinishOrder=plannedByPlayer.get(h.playerId)||field.length;});
+
     broadcast(room,{type:"race_start",race,field});
 
     setTimeout(()=>{
       if(!rooms.has(room.code))return;
-      const results=field.map(h=>({...h,_score:h.ability*(.78+Math.random()*.44)}))
-        .sort((a,b)=>b._score-a._score)
-        .map((h,i)=>{
-          const r={...h,finishOrder:i+1,progress:100,finished:true};
-          delete r._score; return r;
-        });
 
       room.raceActive=false;
       room.prizeEscrowed=false;
