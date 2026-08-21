@@ -259,6 +259,22 @@ function handleMessage(ws, message) {
     return;
   }
 
+  if (message.type === "finish_race_lobby") {
+    const room = rooms.get(ws.roomCode);
+    if (!room) return;
+    const player = room.players.find(p => p.ws === ws);
+    if (!player || !player.host) {
+      send(ws, { type:"error", message:"大会主催者のみレース終了を実行できます。" });
+      return;
+    }
+    if (!room.raceActive) { broadcastRoomState(room); return; }
+    room.raceActive=false;
+    room.prizeEscrowed=false;
+    broadcast(room,{type:"race_lobby",raceNo:room.raceNo||1});
+    broadcastRoomState(room);
+    return;
+  }
+
   if (message.type === "ready") {
     const room = rooms.get(ws.roomCode);
     if (!room) return;
