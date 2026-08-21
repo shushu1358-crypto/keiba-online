@@ -284,6 +284,16 @@ function handleMessage(ws, message) {
       return;
     }
 
+    const requestedPrize = Math.max(0, Math.floor(Number(message.prizePaidAmount ?? room.prize ?? 0)));
+    if (requestedPrize !== Number(room.prize || 0) || message.prizePaid !== true) {
+      send(ws, { type: "error", message: "大会賞金の預け入れが確認できません。主催者の賞金を用意してから開始してください。" });
+      return;
+    }
+    if (room.prizeEscrowed) {
+      send(ws, { type: "error", message: "この大会賞金はすでに預け入れ済みです。" });
+      return;
+    }
+
     const ready = room.players.filter(p => p.ready && p.horse);
     if (ready.length < 2) {
       send(ws, { type: "error", message: "2人以上が出走準備OKになってから開始してください。" });
@@ -298,6 +308,7 @@ function handleMessage(ws, message) {
         number:i+1, playerId:p.id,
         name:String(h.name||p.name||"プレイヤー").slice(0,12),
         speed,stamina,power,guts,
+        age:Math.max(2,Math.min(20,Math.floor(Number(h.age)||2))),
         wetAbility:Number(h.wetAbility)||70,
         style:h.style||"差し",
         bgColor:/^#[0-9a-fA-F]{6}$/.test(h.bgColor||"")?h.bgColor:"#378f50",
@@ -306,6 +317,7 @@ function handleMessage(ws, message) {
     });
 
     room.raceActive=true;
+    room.prizeEscrowed=true;
     room.raceNo=(room.raceNo||0)+1;
     const race={...(message.race||{}),prize:room.prize||0};
 
@@ -321,10 +333,11 @@ function handleMessage(ws, message) {
         });
 
       room.raceActive=false;
+      room.prizeEscrowed=false;
       room.players.forEach(p=>{p.ready=false;p.horse=null;});
-      broadcast(room,{type:"race_result",raceNo:room.raceNo,race,results});
+      broadcast(room,{type:"race_result",raceNo:room.raceNo,race,results,prizePaid:room.prize||0});
       broadcastRoomState(room);
-    },4500);
+    },5600);
 
     return;
   }
