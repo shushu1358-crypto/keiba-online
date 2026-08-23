@@ -81,6 +81,7 @@ function broadcastRoomState(room) {
     size: room.size,
     format: room.format,
     prize: (room.prize || 0n).toString(),
+    cpuCount: room.cpuCount, cpuLevel: room.cpuLevel, bettingEnabled: room.bettingEnabled,
     hostId: room.players.find(p => p.host)?.id || null,
     players: publicPlayers(room)
   });
@@ -189,6 +190,9 @@ function handleMessage(ws, message) {
       size: Math.min(Math.max(Number(message.size) || 8, 2), 32),
       format: String(message.format || "トーナメント"),
       prize: prizeBig(message.prize),
+      cpuCount: Math.min(Math.max(Number(message.cpuCount)||0,0),8),
+      cpuLevel: ["EASY","NORMAL","HARD","EXPERT","LEGEND"].includes(String(message.cpuLevel||"").toUpperCase()) ? String(message.cpuLevel).toUpperCase() : "NORMAL",
+      bettingEnabled: !!message.bettingEnabled,
       raceActive: false,
       raceNo: 0,
       players: [player]
@@ -204,6 +208,7 @@ function handleMessage(ws, message) {
       host: true,
       size: room.size,
       prize: (room.prize || 0n).toString(),
+      cpuCount: room.cpuCount, cpuLevel: room.cpuLevel, bettingEnabled: room.bettingEnabled,
       hostId: player.id,
       players: publicPlayers(room)
     });
@@ -250,6 +255,7 @@ function handleMessage(ws, message) {
       host: false,
       size: room.size,
       prize: (room.prize || 0n).toString(),
+      cpuCount: room.cpuCount, cpuLevel: room.cpuLevel, bettingEnabled: room.bettingEnabled,
       hostId: room.players.find(p => p.host)?.id || null,
       players: publicPlayers(room)
     });
@@ -358,27 +364,29 @@ function handleMessage(ws, message) {
       return;
     }
 
-    const ready = room.players.filter(p => p.ready && p.horse);
-    if (ready.length < 2) {
-      send(ws, { type: "error", message: "2人以上が出走準備OKになってから開始してください。" });
+    const ready=room.players.filter(p=>p.ready);
+    const levelBase={EASY:48,NORMAL:65,HARD:82,EXPERT:98,LEGEND:115}[room.cpuLevel]||65;
+    const cpu=[];
+    for(let i=0;i<room.cpuCount;i++){
+      const base=levelBase+Math.floor(Math.random()*11)-5;
+      const jitter=()=>Math.max(20,base+Math.floor(Math.random()*13)-6);
+      const speed=jitter(),stamina=jitter(),power=jitter(),guts=jitter();
+      cpu.push({number:0,playerId:`cpu_${room.raceNo||0}_${i}_${Math.random().toString(36).slice(2,7)}`,isCPU:true,
+        name:`CPU ${i+1}`,speed,stamina,power,guts,age:2+Math.floor(Math.random()*4),wetAbility:70,style:["逃げ","先行","差し","追込"][i%4],
+        bgColor:"#5d6575",ability:speed*.35+stamina*.25+power*.2+guts*.2});
+    }
+    const field=ready.filter(p=>p.horse).map(p=>{
+      const h=p.horse||{}; const speed=Number(h.speed)||60,stamina=Number(h.stamina)||60,power=Number(h.power)||60,guts=Number(h.guts)||60;
+      return {number:0,playerId:p.id,isCPU:false,name:String(h.name||p.name||"プレイヤー").slice(0,12),speed,stamina,power,guts,
+        age:Math.max(2,Math.min(20,Math.floor(Number(h.age)||2))),wetAbility:Number(h.wetAbility)||70,style:h.style||"差し",
+        bgColor:/^#[0-9a-fA-F]{6}$/.test(h.bgColor||"")?h.bgColor:"#378f50",ability:speed*.35+stamina*.25+power*.2+guts*.2};
+    }).concat(cpu);
+    if(field.length<2){
+      send(ws,{type:"error",message:"出走馬が2頭未満です。愛馬を出走させるかCPUを追加してください。"});
       return;
     }
-
-    const field = ready.map((p, i) => {
-      const h = p.horse || {};
-      const speed=Number(h.speed)||60, stamina=Number(h.stamina)||60;
-      const power=Number(h.power)||60, guts=Number(h.guts)||60;
-      return {
-        number:i+1, playerId:p.id,
-        name:String(h.name||p.name||"プレイヤー").slice(0,12),
-        speed,stamina,power,guts,
-        age:Math.max(2,Math.min(20,Math.floor(Number(h.age)||2))),
-        wetAbility:Number(h.wetAbility)||70,
-        style:h.style||"差し",
-        bgColor:/^#[0-9a-fA-F]{6}$/.test(h.bgColor||"")?h.bgColor:"#378f50",
-        ability:speed*.35+stamina*.25+power*.2+guts*.2
-      };
-    });
+    if(field.length>room.size){field.length=room.size;} 
+    field.forEach((h,i)=>h.number=i+1);
 
     room.raceActive=true;
     room.prizeEscrowed=true;
@@ -414,7 +422,7 @@ function handleMessage(ws, message) {
       h.finishTimeMs=result?.finishTimeMs||5250;
     });
 
-    broadcast(room,{type:"race_start",race,field});
+    broadcast(room,{type:"race_start",race,field,bettingEnabled:room.bettingEnabled,cpuCount:room.cpuCount,cpuLevel:room.cpuLevel});
 
     setTimeout(()=>{
       if(!rooms.has(room.code))return;
