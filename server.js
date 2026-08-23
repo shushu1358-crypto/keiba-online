@@ -55,6 +55,9 @@ function broadcast(room, data) {
   }
 }
 
+function prizeBig(v){
+  try{const s=String(v ?? "0").replace(/,/g,"").trim();return /^\\d+$/.test(s)?BigInt(s):0n}catch(e){return 0n}
+}
 function broadcastRoomState(room) {
   broadcast(room, {
     type: "room_state",
@@ -62,7 +65,7 @@ function broadcastRoomState(room) {
     name: room.name,
     size: room.size,
     format: room.format,
-    prize: room.prize || 0,
+    prize: (room.prize || 0n).toString(),
     hostId: room.players.find(p => p.host)?.id || null,
     players: publicPlayers(room)
   });
@@ -170,7 +173,7 @@ function handleMessage(ws, message) {
       name: String(message.name || "ミント杯").slice(0, 24),
       size: Math.min(Math.max(Number(message.size) || 8, 2), 32),
       format: String(message.format || "トーナメント"),
-      prize: Math.max(0, Math.min(1000000000000, Math.floor(Number(message.prize) || 0))),
+      prize: prizeBig(message.prize),
       raceActive: false,
       raceNo: 0,
       players: [player]
@@ -185,7 +188,7 @@ function handleMessage(ws, message) {
       playerId: player.id,
       host: true,
       size: room.size,
-      prize: room.prize || 0,
+      prize: (room.prize || 0n).toString(),
       hostId: player.id,
       players: publicPlayers(room)
     });
@@ -231,7 +234,7 @@ function handleMessage(ws, message) {
       playerId: player.id,
       host: false,
       size: room.size,
-      prize: room.prize || 0,
+      prize: (room.prize || 0n).toString(),
       hostId: room.players.find(p => p.host)?.id || null,
       players: publicPlayers(room)
     });
@@ -301,8 +304,8 @@ function handleMessage(ws, message) {
       send(ws, { type: "error", message: "レース中は大会賞金を変更できません。" });
       return;
     }
-    const prize = Math.max(0, Math.min(1000000000000, Math.floor(Number(message.prize) || 0)));
-    if (prize % 100 !== 0) {
+    const prize = prizeBig(message.prize);
+    if (prize % 100n !== 0n) {
       send(ws, { type: "error", message: "大会賞金は100枚単位で設定してください。" });
       return;
     }
@@ -325,14 +328,14 @@ function handleMessage(ws, message) {
       return;
     }
 
-    const requestedPrize = Math.max(0, Math.floor(Number(message.prizePaidAmount ?? room.prize ?? 0)));
-    const hostBalance = Math.floor(Number(message.hostBalance));
-    if (requestedPrize !== Number(room.prize || 0)) {
-      send(ws, { type: "error", message: `大会賞金が一致しません。現在の設定額は ${Number(room.prize||0).toLocaleString()}枚です。` });
+    const requestedPrize = prizeBig(message.prizePaidAmount ?? room.prize ?? 0);
+    const hostBalance = prizeBig(message.hostBalance);
+    if (requestedPrize !== prizeBig(room.prize || 0)) {
+      send(ws, { type: "error", message: `大会賞金が一致しません。現在の設定額は ${prizeBig(room.prize||0).toLocaleString()}枚です。` });
       return;
     }
-    if (!Number.isFinite(hostBalance) || hostBalance < requestedPrize) {
-      send(ws, { type: "error", message: `主催者の所持金が大会賞金に足りません。必要：${requestedPrize.toLocaleString()}枚 / 所持：${Number.isFinite(hostBalance)?hostBalance.toLocaleString():"不明"}枚` });
+    if (hostBalance < requestedPrize) {
+      send(ws, { type: "error", message: `主催者の所持金が大会賞金に足りません。必要：${requestedPrize.toLocaleString()}枚 / 所持：${hostBalance.toLocaleString()}枚` });
       return;
     }
     if (room.prizeEscrowed) {
@@ -365,7 +368,7 @@ function handleMessage(ws, message) {
     room.raceActive=true;
     room.prizeEscrowed=true;
     room.raceNo=(room.raceNo||0)+1;
-    const race={...(message.race||{}),prize:room.prize||0};
+    const race={...(message.race||{}),prize:(room.prize||0n).toString()};
 
     // レース結果を開始時点で確定し、同じ順番を全クライアントへ渡す。
     // これで「画面では1着なのに結果は2着」のズレを防ぐ。
