@@ -55,8 +55,9 @@ function broadcast(room, data) {
   }
 }
 
+const MAX_COIN = BigInt("1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
 function prizeBig(v){
-  try{const s=String(v ?? "0").replace(/,/g,"").trim();return /^\\d+$/.test(s)?BigInt(s):0n}catch(e){return 0n}
+  try{const s=String(v ?? "0").replace(/,/g,"").trim();if(!/^\\d+$/.test(s))return 0n; const n=BigInt(s); return n>MAX_COIN?MAX_COIN:n}catch(e){return 0n}
 }
 function broadcastRoomState(room) {
   broadcast(room, {
