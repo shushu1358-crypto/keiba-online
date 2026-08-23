@@ -59,6 +59,20 @@ const MAX_COIN = BigInt("1000000000000000000000000000000000000000000000000000000
 function prizeBig(v){
   try{const s=String(v ?? "0").replace(/,/g,"").trim();if(!/^\\d+$/.test(s))return 0n; const n=BigInt(s); return n>MAX_COIN?MAX_COIN:n}catch(e){return 0n}
 }
+function broadcastAuthoritativeRaceState(room, state){
+  if(!room || !room.players)return;
+  const payload={type:"authoritative_race_state",...state};
+  for(const p of room.players){
+    try{if(p.ws && p.ws.readyState===1)p.ws.send(JSON.stringify(payload));}catch(e){}
+  }
+}
+function broadcastAuthoritativeRaceResult(room, results, race){
+  if(!room || !room.players)return;
+  const payload={type:"authoritative_race_result",results,race};
+  for(const p of room.players){
+    try{if(p.ws && p.ws.readyState===1)p.ws.send(JSON.stringify(payload));}catch(e){}
+  }
+}
 function broadcastRoomState(room) {
   broadcast(room, {
     type: "room_state",
